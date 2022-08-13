@@ -1,0 +1,4 @@
+cron:
+- description: "2 times a daily tap"
+  url: /
+  schedule: every 12 hours
