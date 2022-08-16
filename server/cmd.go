@@ -1,7 +1,7 @@
 package main
 
 import (
-	"app/handlers"
+	"app/lib"
 	"app/models"
 	"context"
 	"log"
@@ -20,7 +20,7 @@ func main() {
 		log.Fatalf("setup: %v", err)
 	}
 
-	env := &handlers.Env{
+	env := &lib.Env{
 		StartTime: startupTime,
 		Storage: &models.StorageModel{
 			Client: client,
