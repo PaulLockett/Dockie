@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"strconv"
 
 	"cloud.google.com/go/storage"
 )
@@ -28,7 +29,7 @@ type StorageUserStub struct {
 
 type LocalUserStub struct {
 	InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-	TimesUsed       string `json:"TimesUsed,omitempty"`
+	TimesUsed       int    `json:"TimesUsed,omitempty"`
 	InServedStorage bool   `json:"InServedStorage,omitempty"`
 	UserAuthKey     string `json:"UserAuthKey,omitempty"`
 }
@@ -91,9 +92,13 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 	localCheckpoint.CurrentEpoc = checkpoint.CurrentEpoc
 	localCheckpoint.UserMap = make(map[string]LocalUserStub)
 	for _, user := range checkpoint.UserList {
+		timesUsed, err := strconv.Atoi(user.TimesUsed)
+		if err != nil {
+			return LocalCheckpoint{}, err
+		}
 		localCheckpoint.UserMap[user.UserID] = LocalUserStub{
 			InNextEpoc:      user.InNextEpoc,
-			TimesUsed:       user.TimesUsed,
+			TimesUsed:       timesUsed,
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
@@ -116,7 +121,7 @@ func formatCheckpoint(checkpoint LocalCheckpoint) ([]byte, error) {
 		}{
 			UserID:          userID,
 			InNextEpoc:      user.InNextEpoc,
-			TimesUsed:       user.TimesUsed,
+			TimesUsed:       strconv.Itoa(user.TimesUsed),
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
