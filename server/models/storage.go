@@ -15,28 +15,28 @@ type StorageModel struct {
 }
 
 type StorageCheckpoint struct {
-	CurrentEpoc int               `json:"CurrentEpoc,omitempty"`
-	UserList    []StorageUserStub `json:"UserList,omitempty"`
+	CurrentEpoc int               `json:"CurrentEpoc"`
+	UserList    []StorageUserStub `json:"UserList"`
 }
 
 type StorageUserStub struct {
-	UserID          string `json:"userID,omitempty"`
-	InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-	TimesUsed       string `json:"TimesUsed,omitempty"`
-	InServedStorage bool   `json:"InServedStorage,omitempty"`
-	UserAuthKey     string `json:"UserAuthKey,omitempty"`
+	UserID          string `json:"userID"`
+	InNextEpoc      bool   `json:"inNextEpoc"`
+	TimesUsed       string `json:"TimesUsed"`
+	InServedStorage bool   `json:"InServedStorage"`
+	UserAuthKey     string `json:"UserAuthKey"`
 }
 
 type LocalUserStub struct {
-	InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-	TimesUsed       int    `json:"TimesUsed,omitempty"`
-	InServedStorage bool   `json:"InServedStorage,omitempty"`
-	UserAuthKey     string `json:"UserAuthKey,omitempty"`
+	InNextEpoc      bool   `json:"inNextEpoc"`
+	TimesUsed       int    `json:"TimesUsed"`
+	InServedStorage bool   `json:"InServedStorage"`
+	UserAuthKey     string `json:"UserAuthKey"`
 }
 
 type LocalCheckpoint struct {
-	CurrentEpoc int                      `json:"CurrentEpoc,omitempty"`
-	UserMap     map[string]LocalUserStub `json:"UserMap,omitempty"`
+	CurrentEpoc int                      `json:"CurrentEpoc"`
+	UserMap     map[string]LocalUserStub `json:"UserMap"`
 }
 
 func (g *StorageModel) Setup(ctx context.Context) error {
@@ -113,11 +113,11 @@ func formatCheckpoint(checkpoint LocalCheckpoint) ([]byte, error) {
 	i := 0
 	for userID, user := range checkpoint.UserMap {
 		storageCheckpoint.UserList[i] = struct {
-			UserID          string `json:"userID,omitempty"`
-			InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-			TimesUsed       string `json:"TimesUsed,omitempty"`
-			InServedStorage bool   `json:"InServedStorage,omitempty"`
-			UserAuthKey     string `json:"UserAuthKey,omitempty"`
+			UserID          string `json:"userID"`
+			InNextEpoc      bool   `json:"inNextEpoc"`
+			TimesUsed       string `json:"TimesUsed"`
+			InServedStorage bool   `json:"InServedStorage"`
+			UserAuthKey     string `json:"UserAuthKey"`
 		}{
 			UserID:          userID,
 			InNextEpoc:      user.InNextEpoc,

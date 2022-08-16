@@ -36,6 +36,7 @@ func main() {
 	r.HandleFunc("/_ah/warmup", env.WarmUpHandler)
 
 	r.HandleFunc("/", env.IndexGetHandler).Methods("GET")
+	r.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
 
 	port := os.Getenv("PORT")
 	if port == "" {
