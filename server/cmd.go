@@ -1,7 +1,7 @@
 package main
 
 import (
-	"app/handlers"
+	"app/lib"
 	"app/models"
 	"context"
 	"log"
@@ -9,29 +9,34 @@ import (
 	"os"
 	"time"
 
-	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
 )
 
 func main() {
 	startupTime := time.Now()
-	client, err := storage.NewClient(context.Background())
+
+	storageModel := new(models.StorageModel)
+	storageModel.Setup(context.Background())
+	checkpoint, err := storageModel.GetCheckpoint()
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		checkpoint = models.LocalCheckpoint{
+			CurrentEpoc: 0,
+			UserMap:     make(map[string]models.LocalUserStub),
+		}
 	}
 
-	env := &handlers.Env{
-		StartTime: startupTime,
-		Storage: &models.StorageModel{
-			Client: client,
-		},
+	env := &lib.Env{
+		StartTime:  startupTime,
+		Checkpoint: checkpoint,
+		Storage:    storageModel,
 	}
 
 	r := mux.NewRouter()
 
 	r.HandleFunc("/_ah/warmup", env.WarmUpHandler)
 
-	r.HandleFunc("/", env.IndexHandler).Methods("GET")
+	r.HandleFunc("/", env.IndexGetHandler).Methods("GET")
+	r.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
 
 	port := os.Getenv("PORT")
 	if port == "" {

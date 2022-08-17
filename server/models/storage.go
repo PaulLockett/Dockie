@@ -4,37 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"strconv"
 
 	"cloud.google.com/go/storage"
 )
 
 type StorageModel struct {
 	Client *storage.Client
+	ctx    context.Context
 }
 
 type StorageCheckpoint struct {
-	CurrentEpoc int               `json:"CurrentEpoc,omitempty"`
-	UserList    []StorageUserStub `json:"UserList,omitempty"`
+	CurrentEpoc int               `json:"CurrentEpoc"`
+	UserList    []StorageUserStub `json:"UserList"`
 }
 
 type StorageUserStub struct {
-	UserID          string `json:"userID,omitempty"`
-	InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-	TimesUsed       string `json:"TimesUsed,omitempty"`
-	InServedStorage bool   `json:"InServedStorage,omitempty"`
-	UserAuthKey     string `json:"UserAuthKey,omitempty"`
+	UserID          string `json:"userID"`
+	InNextEpoc      bool   `json:"inNextEpoc"`
+	TimesUsed       string `json:"TimesUsed"`
+	InServedStorage bool   `json:"InServedStorage"`
+	UserAuthKey     string `json:"UserAuthKey"`
 }
 
 type LocalUserStub struct {
-	InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-	TimesUsed       string `json:"TimesUsed,omitempty"`
-	InServedStorage bool   `json:"InServedStorage,omitempty"`
-	UserAuthKey     string `json:"UserAuthKey,omitempty"`
+	InNextEpoc      bool   `json:"inNextEpoc"`
+	TimesUsed       int    `json:"TimesUsed"`
+	InServedStorage bool   `json:"InServedStorage"`
+	UserAuthKey     string `json:"UserAuthKey"`
 }
 
 type LocalCheckpoint struct {
-	CurrentEpoc int                      `json:"CurrentEpoc,omitempty"`
-	UserMap     map[string]LocalUserStub `json:"UserMap,omitempty"`
+	CurrentEpoc int                      `json:"CurrentEpoc"`
+	UserMap     map[string]LocalUserStub `json:"UserMap"`
 }
 
 func (g *StorageModel) Setup(ctx context.Context) error {
@@ -42,10 +44,11 @@ func (g *StorageModel) Setup(ctx context.Context) error {
 	if g.Client, err = storage.NewClient(ctx); err != nil {
 		return err
 	}
+	g.ctx = ctx
 	return nil
 }
 
-func (g *StorageModel) Get(ctx context.Context, bucket, object string) ([]byte, error) {
+func (g *StorageModel) get(ctx context.Context, bucket, object string) ([]byte, error) {
 	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(ctx)
 	if err != nil {
 		return nil, err
@@ -54,7 +57,7 @@ func (g *StorageModel) Get(ctx context.Context, bucket, object string) ([]byte, 
 	return ioutil.ReadAll(rc)
 }
 
-func (g *StorageModel) Put(ctx context.Context, bucket, object string, data []byte) error {
+func (g *StorageModel) put(ctx context.Context, bucket, object string, data []byte) error {
 	wc := g.Client.Bucket(bucket).Object(object).NewWriter(ctx)
 	defer wc.Close()
 	_, err := wc.Write(data)
@@ -62,8 +65,8 @@ func (g *StorageModel) Put(ctx context.Context, bucket, object string, data []by
 }
 
 // GetCheckpoint returns the go map representation of the checkpoint JSON file.
-func (g *StorageModel) GetCheckpoint(ctx context.Context, bucket string) (LocalCheckpoint, error) {
-	data, err := g.Get(ctx, bucket, "checkpoint.json")
+func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
+	data, err := g.get(g.ctx, "twitter_users_v1", "checkpoint.json")
 	if err != nil {
 		return LocalCheckpoint{}, err
 	}
@@ -71,12 +74,12 @@ func (g *StorageModel) GetCheckpoint(ctx context.Context, bucket string) (LocalC
 }
 
 // PutCheckpoint writes the go map representation of the checkpoint JSON file.
-func (g *StorageModel) PutCheckpoint(ctx context.Context, bucket string, checkpoint LocalCheckpoint) error {
+func (g *StorageModel) PutCheckpoint(checkpoint LocalCheckpoint) error {
 	data, err := formatCheckpoint(checkpoint)
 	if err != nil {
 		return err
 	}
-	return g.Put(ctx, bucket, "checkpoint.json", data)
+	return g.put(g.ctx, "twitter_users_v1", "checkpoint.json", data)
 }
 
 func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
@@ -89,9 +92,13 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 	localCheckpoint.CurrentEpoc = checkpoint.CurrentEpoc
 	localCheckpoint.UserMap = make(map[string]LocalUserStub)
 	for _, user := range checkpoint.UserList {
+		timesUsed, err := strconv.Atoi(user.TimesUsed)
+		if err != nil {
+			return LocalCheckpoint{}, err
+		}
 		localCheckpoint.UserMap[user.UserID] = LocalUserStub{
 			InNextEpoc:      user.InNextEpoc,
-			TimesUsed:       user.TimesUsed,
+			TimesUsed:       timesUsed,
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
@@ -106,15 +113,15 @@ func formatCheckpoint(checkpoint LocalCheckpoint) ([]byte, error) {
 	i := 0
 	for userID, user := range checkpoint.UserMap {
 		storageCheckpoint.UserList[i] = struct {
-			UserID          string `json:"userID,omitempty"`
-			InNextEpoc      bool   `json:"inNextEpoc,omitempty"`
-			TimesUsed       string `json:"TimesUsed,omitempty"`
-			InServedStorage bool   `json:"InServedStorage,omitempty"`
-			UserAuthKey     string `json:"UserAuthKey,omitempty"`
+			UserID          string `json:"userID"`
+			InNextEpoc      bool   `json:"inNextEpoc"`
+			TimesUsed       string `json:"TimesUsed"`
+			InServedStorage bool   `json:"InServedStorage"`
+			UserAuthKey     string `json:"UserAuthKey"`
 		}{
 			UserID:          userID,
 			InNextEpoc:      user.InNextEpoc,
-			TimesUsed:       user.TimesUsed,
+			TimesUsed:       strconv.Itoa(user.TimesUsed),
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
