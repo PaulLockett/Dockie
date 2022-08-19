@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"os"
 	"strconv"
 
 	"cloud.google.com/go/storage"
@@ -48,8 +49,8 @@ func (g *StorageModel) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (g *StorageModel) get(ctx context.Context, bucket, object string) ([]byte, error) {
-	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(ctx)
+func (g *StorageModel) get(bucket, object string) ([]byte, error) {
+	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(g.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +58,8 @@ func (g *StorageModel) get(ctx context.Context, bucket, object string) ([]byte, 
 	return ioutil.ReadAll(rc)
 }
 
-func (g *StorageModel) put(ctx context.Context, bucket, object string, data []byte) error {
-	wc := g.Client.Bucket(bucket).Object(object).NewWriter(ctx)
+func (g *StorageModel) Put(bucket, object string, data []byte) error {
+	wc := g.Client.Bucket(bucket).Object(object).NewWriter(g.ctx)
 	defer wc.Close()
 	_, err := wc.Write(data)
 	return err
@@ -66,7 +67,7 @@ func (g *StorageModel) put(ctx context.Context, bucket, object string, data []by
 
 // GetCheckpoint returns the go map representation of the checkpoint JSON file.
 func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
-	data, err := g.get(g.ctx, "twitter_users_v1", "checkpoint.json")
+	data, err := g.get(os.Getenv("BUCKET_NAME"), "checkpoint.json")
 	if err != nil {
 		return LocalCheckpoint{}, err
 	}
@@ -79,7 +80,7 @@ func (g *StorageModel) PutCheckpoint(checkpoint LocalCheckpoint) error {
 	if err != nil {
 		return err
 	}
-	return g.put(g.ctx, "twitter_users_v1", "checkpoint.json", data)
+	return g.Put(os.Getenv("BUCKET_NAME"), "checkpoint.json", data)
 }
 
 func parseCheckpoint(data []byte) (LocalCheckpoint, error) {

@@ -9,12 +9,15 @@ import (
 	"os"
 	"time"
 
+	twitter "github.com/g8rswimmer/go-twitter/v2"
 	"github.com/gorilla/mux"
 )
 
 func main() {
+	// setup data structures and sources
 	startupTime := time.Now()
 
+	// setup google cloud storage
 	storageModel := new(models.StorageModel)
 	storageModel.Setup(context.Background())
 	checkpoint, err := storageModel.GetCheckpoint()
@@ -25,10 +28,20 @@ func main() {
 		}
 	}
 
+	// setup twitter client
+	client := &twitter.Client{
+		Authorizer: models.Authorize{
+			Token: os.Getenv("BEARER_TOKEN"),
+		},
+		Client: http.DefaultClient,
+		Host:   "https://api.twitter.com",
+	}
+
 	env := &lib.Env{
-		StartTime:  startupTime,
-		Checkpoint: checkpoint,
-		Storage:    storageModel,
+		StartTime:     startupTime,
+		Checkpoint:    checkpoint,
+		Storage:       storageModel,
+		TwitterClient: client,
 	}
 
 	r := mux.NewRouter()
@@ -46,4 +59,8 @@ func main() {
 	log.Printf("Listening on port %s", port)
 
 	log.Fatal(http.ListenAndServe(":"+port, r))
+}
+
+func Refresh(ctx context.Context) error {
+	return nil
 }
