@@ -132,7 +132,7 @@ func (env *Env) reportError(userId string, err error, partialErrors []*twitter.E
 func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings []FollowMap) {
 	env.RunLogger.Printf("Sending %d user dictionaries", len(dictionaries))
 	for _, dictionary := range dictionaries {
-		userData, err := json.Marshal(dictionary)
+		userData, err := json.Marshal(dictionary.User)
 		env.Checkpoint.UserMap[dictionary.User.ID] = models.LocalUserStub{
 			InNextEpoc:      keepFresh,
 			TimesUsed:       0,
