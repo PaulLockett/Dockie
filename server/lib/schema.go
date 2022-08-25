@@ -3,6 +3,7 @@ package lib
 import (
 	"app/models"
 	"context"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type Env struct {
 	StartTime            time.Time
 	Checkpoint           models.LocalCheckpoint
+	RunLogger            *log.Logger
 	ApiKey               string
 	wg                   *sync.WaitGroup
 	TwitterClient        *twitter.Client
@@ -48,6 +50,7 @@ type FollowMap struct {
 }
 
 func (env *Env) FollowerExpander(userFollowerRequestChan <-chan userRequest) {
+	env.RunLogger.Println("in FollowerExpander")
 	defer env.wg.Done()
 
 	for userRequest := range userFollowerRequestChan {
@@ -59,6 +62,7 @@ func (env *Env) FollowerExpander(userFollowerRequestChan <-chan userRequest) {
 }
 
 func (env *Env) FriendExpander(userFriendRequestChan <-chan userRequest) {
+	env.RunLogger.Println("in FriendExpander")
 	defer env.wg.Done()
 
 	for userRequest := range userFriendRequestChan {
@@ -71,6 +75,7 @@ func (env *Env) FriendExpander(userFriendRequestChan <-chan userRequest) {
 }
 
 func (env *Env) BatchUserExpander(batchUserRequestChan <-chan batchUserRequest) {
+	env.RunLogger.Println("in BatchUserExpander")
 	defer env.wg.Done()
 
 	for batchUserRequest := range batchUserRequestChan {
@@ -82,16 +87,19 @@ func (env *Env) BatchUserExpander(batchUserRequestChan <-chan batchUserRequest) 
 }
 
 func (env *Env) UserDataSaver(userDataChan <-chan string) {
+	env.RunLogger.Println("in UserDataSaver")
 	defer env.wg.Done()
 	env.putData(userDataChan, "user_data/")
 }
 
 func (env *Env) FollowMappingSaver(followMapChan <-chan string) {
+	env.RunLogger.Println("in FollowMappingSaver")
 	defer env.wg.Done()
 	env.putData(followMapChan, "follow_map/")
 }
 
 func (env *Env) putData(Chan <-chan string, directoryPrefix string) {
+	env.RunLogger.Println("in putData")
 	batch := make([]string, 0)
 
 	for obj := range Chan {
@@ -102,9 +110,14 @@ func (env *Env) putData(Chan <-chan string, directoryPrefix string) {
 			batch = make([]string, 0)
 		}
 	}
+	if len(batch) > 0 {
+		file := directoryPrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + time.Now().String() + ".jsonl"
+		go env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+	}
 }
 
 func (env *Env) Refresh() {
+	env.RunLogger.Println("in Refresh")
 	// setup env channels
 	// 360 is max number of Twitter API calls per 15 minutes per 24 hour period per Authenticated User
 	env.userFollowerChan = make(chan userRequest, 360)

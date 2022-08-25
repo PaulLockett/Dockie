@@ -9,6 +9,7 @@ import (
 
 // indexHandler responds to requests with the internal
 func (env *Env) IndexGetHandler(w http.ResponseWriter, r *http.Request) {
+	env.RunLogger.Println("index get")
 	if r.Header.Get("X-API-KEY") != env.ApiKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -24,6 +25,7 @@ func (env *Env) IndexGetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (env *Env) IndexPutHandler(w http.ResponseWriter, r *http.Request) {
+	env.RunLogger.Println("index put")
 	if r.Header.Get("X-API-KEY") != env.ApiKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

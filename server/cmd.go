@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"cloud.google.com/go/logging"
 	twitter "github.com/g8rswimmer/go-twitter/v2"
 	"github.com/go-co-op/gocron"
 	"github.com/gorilla/mux"
@@ -17,6 +18,11 @@ import (
 func main() {
 	// setup data structures and sources
 	startupTime := time.Now()
+
+	// setup logging
+	logClient, err := logging.NewClient(context.Background(), "dockie-359309")
+	logName := "RunLog"
+	runlogger := logClient.Logger(logName).StandardLogger(logging.Info)
 
 	// setup google cloud storage
 	storageModel := new(models.StorageModel)
@@ -40,6 +46,7 @@ func main() {
 
 	env := &lib.Env{
 		ApiKey:        os.Getenv("API_KEY"),
+		RunLogger:     runlogger,
 		StartTime:     startupTime,
 		Checkpoint:    checkpoint,
 		Storage:       storageModel,
@@ -51,7 +58,7 @@ func main() {
 	if os.Getenv("ENV") == "production" {
 		refreshScheduler.SingletonMode().Every(1).Day().At("00:00").Do(env.Refresh)
 	} else {
-		refreshScheduler.SingletonMode().Every(1).Second().Do(env.Refresh)
+		go env.Refresh()
 	}
 	refreshScheduler.StartAsync()
 

@@ -12,7 +12,7 @@ import (
 )
 
 func (env *Env) expandFollowers(userId string, nextToken string) {
-
+	env.RunLogger.Printf("Expanding followers for userID %s", userId)
 	opts := twitter.UserFollowersLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 		MaxResults: 1000,
@@ -47,7 +47,7 @@ func (env *Env) expandFollowers(userId string, nextToken string) {
 }
 
 func (env *Env) expandFriends(userId string, nextToken string) {
-
+	env.RunLogger.Printf("Expanding friends for userID %s", userId)
 	opts := twitter.UserFollowingLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 		MaxResults: 1000,
@@ -81,7 +81,7 @@ func (env *Env) expandFriends(userId string, nextToken string) {
 }
 
 func (env *Env) expandUsers(userIDs []string) {
-
+	env.RunLogger.Printf("Expanding users for %d users", len(userIDs))
 	opts := twitter.UserLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 	}
@@ -131,6 +131,7 @@ func reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
 }
 
 func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings []FollowMap) {
+	env.RunLogger.Printf("Sending %d user dictionaries", len(dictionaries))
 	for _, dictionary := range dictionaries {
 		userData, err := json.Marshal(dictionary)
 		env.Checkpoint.UserMap[dictionary.User.ID] = models.LocalUserStub{
