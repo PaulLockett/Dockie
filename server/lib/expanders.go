@@ -26,20 +26,20 @@ func (env *Env) expandFollowers(userId string, nextToken string) {
 	reportError(userId, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userIDChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
+		env.userFollowerChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
 		return
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userIDChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
+		env.userFollowerChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
-	followerMappings := make([]followMap, len(dictionaries))
+	followerMappings := make([]FollowMap, len(dictionaries))
 	for _, dictionary := range dictionaries {
-		followerMappings = append(followerMappings, followMap{
-			userID:     userId,
-			followerID: dictionary.User.ID,
+		followerMappings = append(followerMappings, FollowMap{
+			UserID:     userId,
+			FollowerID: dictionary.User.ID,
 		})
 	}
 	env.sendUserData(dictionaries, false, followerMappings)
@@ -61,19 +61,19 @@ func (env *Env) expandFriends(userId string, nextToken string) {
 	reportError(userId, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userIDChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
+		env.userFriendChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
 		return
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userIDChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
+		env.userFriendChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
 	}
 	dictionaries := userResponse.Raw.UserDictionaries()
-	followerMappings := make([]followMap, len(dictionaries))
+	followerMappings := make([]FollowMap, len(dictionaries))
 	for _, dictionary := range dictionaries {
-		followerMappings = append(followerMappings, followMap{
-			userID:     dictionary.User.ID,
-			followerID: userId,
+		followerMappings = append(followerMappings, FollowMap{
+			UserID:     dictionary.User.ID,
+			FollowerID: userId,
 		})
 	}
 	env.sendUserData(dictionaries, false, followerMappings)
@@ -95,7 +95,7 @@ func (env *Env) expandUsers(userIDs []string) {
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
-	env.sendUserData(dictionaries, true, []followMap{})
+	env.sendUserData(dictionaries, true, []FollowMap{})
 }
 
 func reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
@@ -130,7 +130,7 @@ func reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
 	}
 }
 
-func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings []followMap) {
+func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings []FollowMap) {
 	for _, dictionary := range dictionaries {
 		userData, err := json.Marshal(dictionary)
 		env.Checkpoint.UserMap[dictionary.User.ID] = models.LocalUserStub{
@@ -145,6 +145,10 @@ func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, ke
 		env.userDataChan <- string(userData)
 	}
 	for _, mapping := range mappings {
-		env.followMapChan <- mapping
+		mappingJSON, err := json.Marshal(mapping)
+		if err != nil {
+			log.Printf("Error marshalling mapping data : %s", err)
+		}
+		env.followMapChan <- string(mappingJSON)
 	}
 }

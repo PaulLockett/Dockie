@@ -10,6 +10,7 @@ import (
 	"time"
 
 	twitter "github.com/g8rswimmer/go-twitter/v2"
+	"github.com/go-co-op/gocron"
 	"github.com/gorilla/mux"
 )
 
@@ -44,12 +45,17 @@ func main() {
 		TwitterClient: client,
 	}
 
-	r := mux.NewRouter()
+	// setup cron job
+	refreshScheduler := gocron.NewScheduler(time.UTC)
+	refreshScheduler.SingletonMode().Every(1).Day().At("00:00").Do(env.Refresh)
+	refreshScheduler.StartAsync()
 
-	r.HandleFunc("/_ah/warmup", env.WarmUpHandler)
+	router := mux.NewRouter()
 
-	r.HandleFunc("/", env.IndexGetHandler).Methods("GET")
-	r.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
+	router.HandleFunc("/_ah/warmup", env.WarmUpHandler)
+
+	router.HandleFunc("/", env.IndexGetHandler).Methods("GET")
+	router.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -58,9 +64,5 @@ func main() {
 	}
 	log.Printf("Listening on port %s", port)
 
-	log.Fatal(http.ListenAndServe(":"+port, r))
-}
-
-func Refresh(ctx context.Context) error {
-	return nil
+	log.Fatal(http.ListenAndServe(":"+port, router))
 }
