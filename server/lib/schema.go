@@ -17,6 +17,7 @@ type Env struct {
 	StartTime            time.Time
 	Checkpoint           models.LocalCheckpoint
 	RunLogger            *log.Logger
+	ErrorLogger          *log.Logger
 	ApiKey               string
 	wg                   *sync.WaitGroup
 	TwitterClient        *twitter.Client
@@ -26,7 +27,7 @@ type Env struct {
 	batchUserRequestChan chan batchUserRequest
 	followMapChan        chan string
 	Storage              interface {
-		Setup(ctx context.Context) error
+		Setup(ctx context.Context, ErrorLogger *log.Logger) error
 		GetCheckpoint() (models.LocalCheckpoint, error)
 		PutCheckpoint(checkpoint models.LocalCheckpoint) error
 		Put(bucket, object string, data []byte) error
@@ -51,11 +52,12 @@ type FollowMap struct {
 
 func (env *Env) FollowerExpander(userFollowerRequestChan <-chan userRequest) {
 	env.RunLogger.Println("in FollowerExpander")
-	defer env.wg.Done()
 
 	for userRequest := range userFollowerRequestChan {
 		if !userRequest.rateLimitReset.IsZero() {
+			env.RunLogger.Printf("sleeping for %s in FollowerExpander", time.Until(userRequest.rateLimitReset))
 			time.Sleep(time.Until(userRequest.rateLimitReset))
+			env.RunLogger.Printf("done sleeping in FollowerExpander")
 		}
 		env.expandFollowers(userRequest.userID, userRequest.nextToken)
 	}
@@ -63,11 +65,12 @@ func (env *Env) FollowerExpander(userFollowerRequestChan <-chan userRequest) {
 
 func (env *Env) FriendExpander(userFriendRequestChan <-chan userRequest) {
 	env.RunLogger.Println("in FriendExpander")
-	defer env.wg.Done()
 
 	for userRequest := range userFriendRequestChan {
 		if !userRequest.rateLimitReset.IsZero() {
+			env.RunLogger.Printf("sleeping for %s in FriendExpander", time.Until(userRequest.rateLimitReset))
 			time.Sleep(time.Until(userRequest.rateLimitReset))
+			env.RunLogger.Printf("done sleeping in FriendExpander")
 		}
 		env.expandFriends(userRequest.userID, userRequest.nextToken)
 
@@ -76,11 +79,12 @@ func (env *Env) FriendExpander(userFriendRequestChan <-chan userRequest) {
 
 func (env *Env) BatchUserExpander(batchUserRequestChan <-chan batchUserRequest) {
 	env.RunLogger.Println("in BatchUserExpander")
-	defer env.wg.Done()
 
 	for batchUserRequest := range batchUserRequestChan {
 		if !batchUserRequest.rateLimitReset.IsZero() {
+			env.RunLogger.Printf("sleeping for %s in BatchUserExpander", time.Until(batchUserRequest.rateLimitReset))
 			time.Sleep(time.Until(batchUserRequest.rateLimitReset))
+			env.RunLogger.Printf("done sleeping in BatchUserExpander")
 		}
 		env.expandUsers(batchUserRequest.userIDs)
 	}
@@ -88,32 +92,39 @@ func (env *Env) BatchUserExpander(batchUserRequestChan <-chan batchUserRequest) 
 
 func (env *Env) UserDataSaver(userDataChan <-chan string) {
 	env.RunLogger.Println("in UserDataSaver")
-	defer env.wg.Done()
-	env.putData(userDataChan, "user_data/")
-}
-
-func (env *Env) FollowMappingSaver(followMapChan <-chan string) {
-	env.RunLogger.Println("in FollowMappingSaver")
-	defer env.wg.Done()
-	env.putData(followMapChan, "follow_map/")
-}
-
-func (env *Env) putData(Chan <-chan string, directoryPrefix string) {
-	env.RunLogger.Println("in putData")
 	batch := make([]string, 0)
-
-	for obj := range Chan {
+	for obj := range userDataChan {
 		batch = append(batch, obj)
 		if len(batch) == 1000 {
-			file := directoryPrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + time.Now().String() + ".jsonl"
-			go env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+			file := "user_data/" + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 			batch = make([]string, 0)
 		}
 	}
 	if len(batch) > 0 {
-		file := directoryPrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + time.Now().String() + ".jsonl"
-		go env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+		file := "user_data/" + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+		env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 	}
+	env.RunLogger.Println("done in UserDataSaver")
+}
+
+func (env *Env) FollowMappingSaver(followMapChan <-chan string) {
+	env.RunLogger.Println("in FollowMappingSaver")
+	batch := make([]string, 0)
+
+	for obj := range followMapChan {
+		batch = append(batch, obj)
+		if len(batch) == 1000 {
+			file := "follow_map/" + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+			batch = make([]string, 0)
+		}
+	}
+	if len(batch) > 0 {
+		file := "follow_map/" + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+		env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+	}
+	env.RunLogger.Println("done in FollowMappingSaver")
 }
 
 func (env *Env) Refresh() {
@@ -124,11 +135,9 @@ func (env *Env) Refresh() {
 	env.userFriendChan = make(chan userRequest, 360)
 	env.batchUserRequestChan = make(chan batchUserRequest, 360)
 
-	env.userDataChan = make(chan string)
-	env.followMapChan = make(chan string)
+	env.userDataChan = make(chan string, 10000)
+	env.followMapChan = make(chan string, 10000)
 
-	env.wg = &sync.WaitGroup{}
-	env.wg.Add(5)
 	// start expander workers
 	go env.FollowerExpander(env.userFollowerChan)
 	go env.FriendExpander(env.userFriendChan)
@@ -167,5 +176,5 @@ func (env *Env) Refresh() {
 		}
 	}
 
-	env.wg.Wait()
+	env.RunLogger.Println("done Refresh")
 }

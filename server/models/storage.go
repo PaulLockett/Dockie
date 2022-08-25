@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"log"
 	"os"
 	"strconv"
 
@@ -11,8 +12,9 @@ import (
 )
 
 type StorageModel struct {
-	Client *storage.Client
-	ctx    context.Context
+	Client      *storage.Client
+	ctx         context.Context
+	ErrorLogger *log.Logger
 }
 
 type StorageCheckpoint struct {
@@ -40,9 +42,11 @@ type LocalCheckpoint struct {
 	UserMap     map[string]LocalUserStub `json:"UserMap"`
 }
 
-func (g *StorageModel) Setup(ctx context.Context) error {
+func (g *StorageModel) Setup(ctx context.Context, ErrorLogger *log.Logger) error {
 	var err error
+	g.ErrorLogger = ErrorLogger
 	if g.Client, err = storage.NewClient(ctx); err != nil {
+		g.ErrorLogger.Println(err)
 		return err
 	}
 	g.ctx = ctx
@@ -52,16 +56,26 @@ func (g *StorageModel) Setup(ctx context.Context) error {
 func (g *StorageModel) get(bucket, object string) ([]byte, error) {
 	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(g.ctx)
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return nil, err
 	}
 	defer rc.Close()
 	return ioutil.ReadAll(rc)
 }
 
+func (g *StorageModel) WcClose(wc *storage.Writer) {
+	if err := wc.Close(); err != nil {
+		g.ErrorLogger.Println(err)
+	}
+}
+
 func (g *StorageModel) Put(bucket, object string, data []byte) error {
 	wc := g.Client.Bucket(bucket).Object(object).NewWriter(g.ctx)
-	defer wc.Close()
+	defer g.WcClose(wc)
 	_, err := wc.Write(data)
+	if err != nil {
+		g.ErrorLogger.Println(err)
+	}
 	return err
 }
 
@@ -69,6 +83,7 @@ func (g *StorageModel) Put(bucket, object string, data []byte) error {
 func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
 	data, err := g.get(os.Getenv("BUCKET_NAME"), "checkpoint.json")
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return LocalCheckpoint{}, err
 	}
 	return parseCheckpoint(data)
@@ -78,6 +93,7 @@ func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
 func (g *StorageModel) PutCheckpoint(checkpoint LocalCheckpoint) error {
 	data, err := formatCheckpoint(checkpoint)
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return err
 	}
 	return g.Put(os.Getenv("BUCKET_NAME"), "checkpoint.json", data)

@@ -21,12 +21,15 @@ func main() {
 
 	// setup logging
 	logClient, err := logging.NewClient(context.Background(), "dockie-359309")
-	logName := "RunLog"
-	runlogger := logClient.Logger(logName).StandardLogger(logging.Info)
+	if err != nil {
+		log.Fatalf("Failed to create logging client: %v", err)
+	}
+	runlogger := logClient.Logger("RunLog").StandardLogger(logging.Info)
+	errlogger := logClient.Logger("ErrorLog").StandardLogger(logging.Error)
 
 	// setup google cloud storage
 	storageModel := new(models.StorageModel)
-	storageModel.Setup(context.Background())
+	storageModel.Setup(context.Background(), errlogger)
 	checkpoint, err := storageModel.GetCheckpoint()
 	if err != nil {
 		checkpoint = models.LocalCheckpoint{
@@ -47,6 +50,7 @@ func main() {
 	env := &lib.Env{
 		ApiKey:        os.Getenv("API_KEY"),
 		RunLogger:     runlogger,
+		ErrorLogger:   errlogger,
 		StartTime:     startupTime,
 		Checkpoint:    checkpoint,
 		Storage:       storageModel,

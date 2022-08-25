@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"time"
 
 	twitter "github.com/g8rswimmer/go-twitter/v2"
@@ -23,7 +22,7 @@ func (env *Env) expandFollowers(userId string, nextToken string) {
 	}
 
 	userResponse, err := env.TwitterClient.UserFollowersLookup(context.Background(), userId, opts)
-	reportError(userId, err, userResponse.Raw.Errors)
+	env.reportError(userId, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
 		env.userFollowerChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
@@ -58,7 +57,7 @@ func (env *Env) expandFriends(userId string, nextToken string) {
 	}
 
 	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), userId, opts)
-	reportError(userId, err, userResponse.Raw.Errors)
+	env.reportError(userId, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
 		env.userFriendChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
@@ -87,7 +86,7 @@ func (env *Env) expandUsers(userIDs []string) {
 	}
 
 	userResponse, err := env.TwitterClient.UserLookup(context.Background(), userIDs, opts)
-	reportError("(batch user lookup)", err, userResponse.Raw.Errors)
+	env.reportError("(batch user lookup)", err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
 		env.batchUserRequestChan <- batchUserRequest{userIDs: userIDs, rateLimitReset: rateLimit.Reset.Time()}
@@ -98,26 +97,26 @@ func (env *Env) expandUsers(userIDs []string) {
 	env.sendUserData(dictionaries, true, []FollowMap{})
 }
 
-func reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
+func (env *Env) reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
 	jsonErr := &json.UnsupportedValueError{}
 	ResponseDecodeError := &twitter.ResponseDecodeError{}
 
 	switch {
 	case errors.Is(err, twitter.ErrParameter):
 		// handle a parameter error
-		log.Printf("Parameter error in expandFollowers for userID %s : %s", userId, err)
+		env.ErrorLogger.Printf("Parameter error in expandFollowers for userID %s : %s", userId, err)
 	case errors.As(err, &jsonErr):
 		// handle a json error
-		log.Printf("JSON error in expandFollowers for userID %s : %s", userId, err)
+		env.ErrorLogger.Printf("JSON error in expandFollowers for userID %s : %s", userId, err)
 	case errors.As(err, &ResponseDecodeError):
 		// handle response decode error
-		log.Printf("Response decode error in expandFollowers for userID %s : %s", userId, err)
+		env.ErrorLogger.Printf("Response decode error in expandFollowers for userID %s : %s", userId, err)
 	case errors.As(err, &twitter.HTTPError{}):
 		// handle http response error
-		log.Printf("HTTP error in expandFollowers for userID %s : %s", userId, err)
+		env.ErrorLogger.Printf("HTTP error in expandFollowers for userID %s : %s", userId, err)
 	case err != nil:
 		// handle other errors
-		log.Printf("Other error in expandFollowers for userID %s : %s", userId, err)
+		env.ErrorLogger.Printf("Other error in expandFollowers for userID %s : %s", userId, err)
 	default:
 		// happy path
 	}
@@ -125,7 +124,7 @@ func reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
 	if len(partialErrors) > 0 {
 		// handle partial errors
 		for _, err := range partialErrors {
-			log.Printf("Partial error in expandFollowers for userID %s : %s", userId, err)
+			env.ErrorLogger.Printf("Partial error in expandFollowers for userID %s : %s", userId, err)
 		}
 	}
 }
@@ -141,14 +140,16 @@ func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, ke
 			UserAuthKey:     "",
 		}
 		if err != nil {
-			log.Printf("Error marshalling user data : %s", err)
+			env.ErrorLogger.Printf("Error marshalling user data : %s", err)
 		}
 		env.userDataChan <- string(userData)
 	}
+	env.Storage.PutCheckpoint(env.Checkpoint)
+	env.RunLogger.Printf("Sending %d follower mappings", len(mappings))
 	for _, mapping := range mappings {
 		mappingJSON, err := json.Marshal(mapping)
 		if err != nil {
-			log.Printf("Error marshalling mapping data : %s", err)
+			env.ErrorLogger.Printf("Error marshalling mapping data : %s", err)
 		}
 		env.followMapChan <- string(mappingJSON)
 	}
