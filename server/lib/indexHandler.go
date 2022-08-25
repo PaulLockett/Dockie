@@ -9,6 +9,10 @@ import (
 
 // indexHandler responds to requests with the internal
 func (env *Env) IndexGetHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-API-KEY") != env.ApiKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	checkpointJson, err := json.Marshal(env.Checkpoint)
 	if err != nil {
 		log.Fatal(err)
@@ -20,6 +24,10 @@ func (env *Env) IndexGetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (env *Env) IndexPutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-API-KEY") != env.ApiKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	userIDs := []string{}
 	err := json.NewDecoder(r.Body).Decode(&userIDs)
 	if err != nil {

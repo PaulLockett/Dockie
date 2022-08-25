@@ -39,6 +39,7 @@ func main() {
 	}
 
 	env := &lib.Env{
+		ApiKey:        os.Getenv("API_KEY"),
 		StartTime:     startupTime,
 		Checkpoint:    checkpoint,
 		Storage:       storageModel,
@@ -47,7 +48,11 @@ func main() {
 
 	// setup cron job
 	refreshScheduler := gocron.NewScheduler(time.UTC)
-	refreshScheduler.SingletonMode().Every(1).Day().At("00:00").Do(env.Refresh)
+	if os.Getenv("ENV") == "production" {
+		refreshScheduler.SingletonMode().Every(1).Day().At("00:00").Do(env.Refresh)
+	} else {
+		refreshScheduler.SingletonMode().Every(1).Second().Do(env.Refresh)
+	}
 	refreshScheduler.StartAsync()
 
 	router := mux.NewRouter()

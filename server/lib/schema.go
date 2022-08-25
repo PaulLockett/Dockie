@@ -15,6 +15,7 @@ import (
 type Env struct {
 	StartTime            time.Time
 	Checkpoint           models.LocalCheckpoint
+	ApiKey               string
 	wg                   *sync.WaitGroup
 	TwitterClient        *twitter.Client
 	userFollowerChan     chan userRequest

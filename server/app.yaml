@@ -6,6 +6,8 @@ inbound_services:
 env_variables:
   BUCKET_NAME: "twitter_users_v1"
   BEARER_TOKEN: "AAAAAAAAAAAAAAAAAAAAAOXTYQEAAAAA%2FYzyw5vWwO3q%2F8lCp6JyT8iLB8o%3DQIYeW4whUNbRQm9r7GoEleeKxji25bybySJ6MCwzrwqeUaB9vv"
+  ENV: "dev"
+  API_KEY: "community-african-freedom-diaspora-decentralized"
   
 
 handlers:
