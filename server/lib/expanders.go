@@ -10,72 +10,85 @@ import (
 	twitter "github.com/g8rswimmer/go-twitter/v2"
 )
 
-func (env *Env) expandFollowers(userId string, nextToken string) {
-	env.RunLogger.Printf("Expanding followers for userID %s", userId)
+func (env *Env) expandFollowers(user UserRequest) {
+	if user.shouldClose {
+		return
+	}
+	env.RunLogger.Printf("Expanding followers for userID %s", user.userID)
 	opts := twitter.UserFollowersLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 		MaxResults: 1000,
 	}
 
-	if nextToken != "" {
-		opts.PaginationToken = nextToken
+	if user.nextToken != "" {
+		opts.PaginationToken = user.nextToken
 	}
 
-	userResponse, err := env.TwitterClient.UserFollowersLookup(context.Background(), userId, opts)
-	env.reportError(userId, err, userResponse.Raw.Errors)
+	userResponse, err := env.TwitterClient.UserFollowersLookup(context.Background(), user.userID, opts)
+	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userFollowerChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
+		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: user.nextToken, rateLimitReset: rateLimit.Reset.Time(), closingUser: user.closingUser, shouldClose: false}
 		return
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userFollowerChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
+		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}, closingUser: user.closingUser, shouldClose: false}
+	} else if user.closingUser {
+		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: "", rateLimitReset: time.Time{}, closingUser: true, shouldClose: true}
+		env.pushDataCloseChecks[0] = true
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
 	followerMappings := make([]FollowMap, len(dictionaries))
 	for _, dictionary := range dictionaries {
 		followerMappings = append(followerMappings, FollowMap{
-			UserID:     userId,
+			UserID:     user.userID,
 			FollowerID: dictionary.User.ID,
 		})
 	}
-	env.sendUserData(dictionaries, false, followerMappings)
+	env.sendUserData(dictionaries, false, &followerMappings)
 
 }
 
-func (env *Env) expandFriends(userId string, nextToken string) {
-	env.RunLogger.Printf("Expanding friends for userID %s", userId)
+func (env *Env) expandFriends(user UserRequest) {
+	if user.shouldClose {
+		return
+	}
+	env.RunLogger.Printf("Expanding friends for userID %s", user.userID)
 	opts := twitter.UserFollowingLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 		MaxResults: 1000,
 	}
 
-	if nextToken != "" {
-		opts.PaginationToken = nextToken
+	if user.nextToken != "" {
+		opts.PaginationToken = user.nextToken
 	}
 
-	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), userId, opts)
-	env.reportError(userId, err, userResponse.Raw.Errors)
+	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), user.userID, opts)
+	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userFriendChan <- userRequest{userID: userId, nextToken: nextToken, rateLimitReset: rateLimit.Reset.Time()}
+		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: user.nextToken, rateLimitReset: rateLimit.Reset.Time(), closingUser: user.closingUser, shouldClose: false}
 		return
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userFriendChan <- userRequest{userID: userId, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}}
+		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}, closingUser: user.closingUser, shouldClose: false}
+	} else if user.closingUser {
+		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: "", rateLimitReset: time.Time{}, closingUser: true, shouldClose: true}
+		env.pushDataCloseChecks[1] = true
 	}
+
 	dictionaries := userResponse.Raw.UserDictionaries()
 	followerMappings := make([]FollowMap, len(dictionaries))
 	for _, dictionary := range dictionaries {
 		followerMappings = append(followerMappings, FollowMap{
 			UserID:     dictionary.User.ID,
-			FollowerID: userId,
+			FollowerID: user.userID,
 		})
 	}
-	env.sendUserData(dictionaries, false, followerMappings)
+	env.sendUserData(dictionaries, false, &followerMappings)
 
 }
 
@@ -94,7 +107,7 @@ func (env *Env) expandUsers(userIDs []string) {
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
-	env.sendUserData(dictionaries, true, []FollowMap{})
+	env.sendUserData(dictionaries, true, &[]FollowMap{})
 }
 
 func (env *Env) reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
@@ -129,28 +142,36 @@ func (env *Env) reportError(userId string, err error, partialErrors []*twitter.E
 	}
 }
 
-func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings []FollowMap) {
-	env.RunLogger.Printf("Sending %d user dictionaries", len(dictionaries))
-	for _, dictionary := range dictionaries {
-		userData, err := json.Marshal(dictionary.User)
-		env.Checkpoint.UserMap[dictionary.User.ID] = models.LocalUserStub{
-			InNextEpoc:      keepFresh,
-			TimesUsed:       0,
-			InServedStorage: true,
-			UserAuthKey:     "",
-		}
-		if err != nil {
-			env.ErrorLogger.Printf("Error marshalling user data : %s", err)
-		}
-		env.userDataChan <- string(userData)
+func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings *[]FollowMap) {
+	shouldClose := false
+	if env.pushDataCloseChecks[0] && env.pushDataCloseChecks[1] {
+		shouldClose = true
 	}
-	env.Storage.PutCheckpoint(env.Checkpoint)
-	env.RunLogger.Printf("Sending %d follower mappings", len(mappings))
-	for _, mapping := range mappings {
-		mappingJSON, err := json.Marshal(mapping)
-		if err != nil {
-			env.ErrorLogger.Printf("Error marshalling mapping data : %s", err)
+	if len(dictionaries) != 0 {
+		env.RunLogger.Printf("Sending %d user dictionaries", len(dictionaries))
+		for _, dictionary := range dictionaries {
+			userData, err := json.Marshal(dictionary.User)
+			env.Checkpoint.UserMap[dictionary.User.ID] = models.LocalUserStub{
+				InNextEpoc:      keepFresh,
+				TimesUsed:       0,
+				InServedStorage: true,
+				UserAuthKey:     "",
+			}
+			if err != nil {
+				env.ErrorLogger.Printf("Error marshalling user data : %s", err)
+			}
+			env.userDataChan <- PushData{string(userData), shouldClose}
 		}
-		env.followMapChan <- string(mappingJSON)
+		env.Storage.PutCheckpoint(env.Checkpoint)
+	}
+	if len(*mappings) != 0 {
+		env.RunLogger.Printf("Sending %d follower mappings", len(*mappings))
+		for _, mapping := range *mappings {
+			mappingJSON, err := json.Marshal(mapping)
+			if err != nil {
+				env.ErrorLogger.Printf("Error marshalling mapping data : %s", err)
+			}
+			env.followMapChan <- PushData{string(mappingJSON), shouldClose}
+		}
 	}
 }

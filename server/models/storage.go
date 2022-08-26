@@ -38,8 +38,9 @@ type LocalUserStub struct {
 }
 
 type LocalCheckpoint struct {
-	CurrentEpoc int                      `json:"CurrentEpoc"`
-	UserMap     map[string]LocalUserStub `json:"UserMap"`
+	CurrentEpoc  int                      `json:"CurrentEpoc"`
+	NumKeptUsers int                      `json:"NumKeptUsers"`
+	UserMap      map[string]LocalUserStub `json:"UserMap"`
 }
 
 func (g *StorageModel) Setup(ctx context.Context, ErrorLogger *log.Logger) error {
@@ -106,6 +107,7 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 	}
 
 	var localCheckpoint LocalCheckpoint
+	countKeptUsers := 0
 	localCheckpoint.CurrentEpoc = checkpoint.CurrentEpoc
 	localCheckpoint.UserMap = make(map[string]LocalUserStub)
 	for _, user := range checkpoint.UserList {
@@ -119,7 +121,11 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
+		if user.InNextEpoc {
+			countKeptUsers++
+		}
 	}
+	localCheckpoint.NumKeptUsers = countKeptUsers
 	return localCheckpoint, nil
 }
 
