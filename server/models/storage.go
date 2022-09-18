@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"log"
+	"os"
 	"strconv"
 
 	"cloud.google.com/go/storage"
 )
 
 type StorageModel struct {
-	Client *storage.Client
-	ctx    context.Context
+	Client      *storage.Client
+	ctx         context.Context
+	ErrorLogger *log.Logger
 }
 
 type StorageCheckpoint struct {
@@ -35,39 +38,53 @@ type LocalUserStub struct {
 }
 
 type LocalCheckpoint struct {
-	CurrentEpoc int                      `json:"CurrentEpoc"`
-	UserMap     map[string]LocalUserStub `json:"UserMap"`
+	CurrentEpoc  int                      `json:"CurrentEpoc"`
+	NumKeptUsers int                      `json:"NumKeptUsers"`
+	UserMap      map[string]LocalUserStub `json:"UserMap"`
 }
 
-func (g *StorageModel) Setup(ctx context.Context) error {
+func (g *StorageModel) Setup(ctx context.Context, ErrorLogger *log.Logger) error {
 	var err error
+	g.ErrorLogger = ErrorLogger
 	if g.Client, err = storage.NewClient(ctx); err != nil {
+		g.ErrorLogger.Println(err)
 		return err
 	}
 	g.ctx = ctx
 	return nil
 }
 
-func (g *StorageModel) get(ctx context.Context, bucket, object string) ([]byte, error) {
-	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(ctx)
+func (g *StorageModel) get(bucket, object string) ([]byte, error) {
+	rc, err := g.Client.Bucket(bucket).Object(object).NewReader(g.ctx)
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return nil, err
 	}
 	defer rc.Close()
 	return ioutil.ReadAll(rc)
 }
 
-func (g *StorageModel) put(ctx context.Context, bucket, object string, data []byte) error {
-	wc := g.Client.Bucket(bucket).Object(object).NewWriter(ctx)
-	defer wc.Close()
+func (g *StorageModel) WcClose(wc *storage.Writer) {
+	if err := wc.Close(); err != nil {
+		g.ErrorLogger.Println(err)
+	}
+}
+
+func (g *StorageModel) Put(bucket, object string, data []byte) error {
+	wc := g.Client.Bucket(bucket).Object(object).NewWriter(g.ctx)
+	defer g.WcClose(wc)
 	_, err := wc.Write(data)
+	if err != nil {
+		g.ErrorLogger.Println(err)
+	}
 	return err
 }
 
 // GetCheckpoint returns the go map representation of the checkpoint JSON file.
 func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
-	data, err := g.get(g.ctx, "twitter_users_v1", "checkpoint.json")
+	data, err := g.get(os.Getenv("BUCKET_NAME"), "checkpoint.json")
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return LocalCheckpoint{}, err
 	}
 	return parseCheckpoint(data)
@@ -77,9 +94,10 @@ func (g *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
 func (g *StorageModel) PutCheckpoint(checkpoint LocalCheckpoint) error {
 	data, err := formatCheckpoint(checkpoint)
 	if err != nil {
+		g.ErrorLogger.Println(err)
 		return err
 	}
-	return g.put(g.ctx, "twitter_users_v1", "checkpoint.json", data)
+	return g.Put(os.Getenv("BUCKET_NAME"), "checkpoint.json", data)
 }
 
 func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
@@ -89,6 +107,7 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 	}
 
 	var localCheckpoint LocalCheckpoint
+	countKeptUsers := 0
 	localCheckpoint.CurrentEpoc = checkpoint.CurrentEpoc
 	localCheckpoint.UserMap = make(map[string]LocalUserStub)
 	for _, user := range checkpoint.UserList {
@@ -102,7 +121,11 @@ func parseCheckpoint(data []byte) (LocalCheckpoint, error) {
 			InServedStorage: user.InServedStorage,
 			UserAuthKey:     user.UserAuthKey,
 		}
+		if user.InNextEpoc {
+			countKeptUsers++
+		}
 	}
+	localCheckpoint.NumKeptUsers = countKeptUsers
 	return localCheckpoint, nil
 }
 
