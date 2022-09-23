@@ -11,23 +11,25 @@ import (
 	"time"
 
 	twitter "github.com/g8rswimmer/go-twitter/v2"
+	"go.uber.org/ratelimit"
 )
 
 type Env struct {
-	StartTime            time.Time
-	Checkpoint           models.LocalCheckpoint
-	RunLogger            *log.Logger
-	ErrorLogger          *log.Logger
-	ApiKey               string
-	wg                   *sync.WaitGroup
-	TwitterClient        *twitter.Client
-	userFollowerChan     chan UserRequest
-	userFriendChan       chan UserRequest
-	userDataChan         chan PushData
-	batchUserRequestChan chan batchUserRequest
-	followMapChan        chan PushData
-	pushDataCloseChecks  []bool
-	Storage              interface {
+	StartTime                  time.Time
+	Checkpoint                 models.LocalCheckpoint
+	RunLogger                  *log.Logger
+	ErrorLogger                *log.Logger
+	ApiKey                     string
+	wg                         *sync.WaitGroup
+	TwitterClient              *twitter.Client
+	userDataChan               chan PushData
+	batchUserRequestChan       chan batchUserRequest
+	batchUserRequestLimiter    ratelimit.Limiter
+	userFollowerRequestLimiter ratelimit.Limiter
+	userFriendRequestLimiter   ratelimit.Limiter
+	followMapChan              chan PushData
+	pushDataCloseChecks        []bool
+	Storage                    interface {
 		Setup(ctx context.Context, ErrorLogger *log.Logger) error
 		GetCheckpoint() (models.LocalCheckpoint, error)
 		PutCheckpoint(checkpoint models.LocalCheckpoint) error
@@ -36,16 +38,12 @@ type Env struct {
 }
 
 type UserRequest struct {
-	userID         string
-	nextToken      string
-	rateLimitReset time.Time
-	closingUser    bool
-	shouldClose    bool
+	userID    string
+	nextToken string
 }
 
 type batchUserRequest struct {
-	userIDs        []string
-	rateLimitReset time.Time
+	userIDs []string
 }
 
 type FollowMap struct {
@@ -54,81 +52,66 @@ type FollowMap struct {
 }
 
 type PushData struct {
-	data        string
-	shouldClose bool
+	data string
 }
 
-func (env *Env) FollowerExpander(userFollowerRequestChan <-chan UserRequest) {
-	env.RunLogger.Println("in FollowerExpander")
-	defer env.wg.Done()
-
-	for userRequest := range userFollowerRequestChan {
-		if !userRequest.rateLimitReset.IsZero() {
-			env.RunLogger.Printf("sleeping for %s in FollowerExpander", time.Until(userRequest.rateLimitReset))
-			time.Sleep(time.Until(userRequest.rateLimitReset))
-			env.RunLogger.Printf("done sleeping in FollowerExpander")
-		}
-		env.expandFollowers(userRequest)
-		if userRequest.shouldClose {
-			close(env.userFollowerChan)
-			return
-		}
-	}
-}
-
-func (env *Env) FriendExpander(userFriendRequestChan <-chan UserRequest) {
-	env.RunLogger.Println("in FriendExpander")
-	defer env.wg.Done()
-
-	for userRequest := range userFriendRequestChan {
-		if !userRequest.rateLimitReset.IsZero() {
-			env.RunLogger.Printf("sleeping for %s in FriendExpander", time.Until(userRequest.rateLimitReset))
-			time.Sleep(time.Until(userRequest.rateLimitReset))
-			env.RunLogger.Printf("done sleeping in FriendExpander")
-		}
-		env.expandFriends(userRequest)
-		if userRequest.shouldClose {
-			close(env.userFriendChan)
-			return
-		}
-	}
-}
-
-func (env *Env) BatchUserExpander(batchUserRequestChan <-chan batchUserRequest) {
+func (env *Env) BatchUserExpander(ctx context.Context, batchUserRequestChan <-chan batchUserRequest) {
 	env.RunLogger.Println("in BatchUserExpander")
 	defer env.wg.Done()
 
 	for batchUserRequest := range batchUserRequestChan {
-		if !batchUserRequest.rateLimitReset.IsZero() {
-			env.RunLogger.Printf("sleeping for %s in BatchUserExpander", time.Until(batchUserRequest.rateLimitReset))
-			time.Sleep(time.Until(batchUserRequest.rateLimitReset))
-			env.RunLogger.Printf("done sleeping in BatchUserExpander")
+		if ok := env.expandUsers(batchUserRequest.userIDs); ok {
+			for _, userID := range batchUserRequest.userIDs {
+				env.wg.Add(2)
+				go env.FollowerExpander(UserRequest{userID: userID, nextToken: ""})
+				go env.FriendExpander(UserRequest{userID: userID, nextToken: ""})
+			}
 		}
-		env.expandUsers(batchUserRequest.userIDs)
+		if ctx.Done() != nil {
+			close(env.batchUserRequestChan)
+		}
 	}
 }
 
-func (env *Env) UserDataSaver(userDataChan <-chan PushData) {
-	env.RunLogger.Println("in UserDataSaver")
+func (env *Env) FollowerExpander(userRequest UserRequest) {
+	env.RunLogger.Println("in FollowerExpander")
 	defer env.wg.Done()
 
-	env.saveUserData(userDataChan, "user_data/")
-	close(env.userDataChan)
+	userRequest, done := env.expandFollowers(userRequest)
+	if userRequest.nextToken != "" && !done {
+		env.wg.Add(1)
+		env.FollowerExpander(userRequest)
+	}
+}
+
+func (env *Env) FriendExpander(userRequest UserRequest) {
+	env.RunLogger.Println("in FriendExpander")
+	defer env.wg.Done()
+
+	userRequest, done := env.expandFriends(userRequest)
+	if userRequest.nextToken != "" && !done {
+		env.wg.Add(1)
+		go env.FriendExpander(userRequest)
+	}
+}
+
+func (env *Env) UserDataSaver(ctx context.Context, userDataChan <-chan PushData) {
+	env.RunLogger.Println("in UserDataSaver")
+
+	env.saveUserData(ctx, userDataChan, "user_data/")
 
 	env.RunLogger.Println("done in UserDataSaver")
 }
 
-func (env *Env) FollowMappingSaver(followMapChan <-chan PushData) {
+func (env *Env) FollowMappingSaver(ctx context.Context, followMapChan <-chan PushData) {
 	env.RunLogger.Println("in FollowMappingSaver")
-	defer env.wg.Done()
 
-	env.saveUserData(followMapChan, "follow_map/")
-	close(env.followMapChan)
+	env.saveUserData(ctx, followMapChan, "follow_map/")
 
 	env.RunLogger.Println("done in FollowMappingSaver")
 }
 
-func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
+func (env *Env) saveUserData(ctx context.Context, Chan <-chan PushData, filePrefix string) {
 	batch := make([]string, 0)
 	for obj := range Chan {
 		batch = append(batch, obj.data)
@@ -137,7 +120,7 @@ func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
 			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 			batch = make([]string, 0)
 		}
-		if obj.shouldClose {
+		if ctx.Done() != nil {
 			break
 		}
 	}
@@ -149,12 +132,14 @@ func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
 
 func (env *Env) Refresh() {
 	env.RunLogger.Println("in Refresh")
-	// setup env channels
-	// 360 is max number of Twitter API calls per 15 minutes per 24 hour period per Authenticated User
-	env.userFollowerChan = make(chan UserRequest, 360)
-	env.userFriendChan = make(chan UserRequest, 360)
-	env.batchUserRequestChan = make(chan batchUserRequest, 360)
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	env.batchUserRequestLimiter = ratelimit.New(1)
+	env.userFollowerRequestLimiter = ratelimit.New(1)
+	env.userFriendRequestLimiter = ratelimit.New(1)
 
+	// setup env channels
+	env.batchUserRequestChan = make(chan batchUserRequest, 360)
 	env.userDataChan = make(chan PushData, 100000)
 	env.followMapChan = make(chan PushData, 100000)
 
@@ -162,57 +147,38 @@ func (env *Env) Refresh() {
 
 	// setup env waitgroups
 	env.wg = &sync.WaitGroup{}
-	env.wg.Add(5)
 
-	// start expander workers
-	go env.FollowerExpander(env.userFollowerChan)
-	go env.FriendExpander(env.userFriendChan)
-	go env.BatchUserExpander(env.batchUserRequestChan)
-
-	go env.UserDataSaver(env.userDataChan)
-	go env.FollowMappingSaver(env.followMapChan)
+	// start workers
+	env.wg.Add(1)
+	go env.BatchUserExpander(ctx, env.batchUserRequestChan)
 
 	batch := make([]string, 0)
-	countKeptUsersSeen := 0
 	for userID, userStub := range env.Checkpoint.UserMap {
 		if userStub.InNextEpoc {
-			countKeptUsersSeen++
-			closingUser := false
-			if countKeptUsersSeen == env.Checkpoint.NumKeptUsers {
-				closingUser = true
-			}
 			batch = append(batch, userID)
 			if len(batch) == 1000 {
 				env.batchUserRequestChan <- batchUserRequest{
-					userIDs:        batch,
-					rateLimitReset: time.Time{},
+					userIDs: batch,
 				}
 				batch = make([]string, 0)
-			}
-			env.userFollowerChan <- UserRequest{
-				userID:         userID,
-				nextToken:      "",
-				rateLimitReset: time.Time{},
-				closingUser:    closingUser,
-				shouldClose:    false,
-			}
-			env.userFriendChan <- UserRequest{
-				userID:         userID,
-				nextToken:      "",
-				rateLimitReset: time.Time{},
-				closingUser:    closingUser,
-				shouldClose:    false,
 			}
 		}
 	}
 	if len(batch) > 0 {
 		env.batchUserRequestChan <- batchUserRequest{
-			userIDs:        batch,
-			rateLimitReset: time.Time{},
+			userIDs: batch,
 		}
 	}
-	close(env.batchUserRequestChan)
 
+	// start closing cascade
+	cancel()
+
+	// wait for all workers to finish
 	env.wg.Wait()
+
+	// signal data recording functions to stop receiving data
+	close(env.followMapChan)
+	close(env.userDataChan)
+
 	env.RunLogger.Println("done Refresh")
 }

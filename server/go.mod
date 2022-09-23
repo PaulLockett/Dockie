@@ -9,4 +9,5 @@ require (
 	github.com/g8rswimmer/go-twitter/v2 v2.1.2 // indirect
 	github.com/go-co-op/gocron v1.16.2 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
+	go.uber.org/ratelimit v0.2.0 // indirect
 )
