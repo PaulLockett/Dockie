@@ -28,7 +28,6 @@ type Env struct {
 	userFollowerRequestLimiter ratelimit.Limiter
 	userFriendRequestLimiter   ratelimit.Limiter
 	followMapChan              chan PushData
-	pushDataCloseChecks        []bool
 	Storage                    interface {
 		Setup(ctx context.Context, ErrorLogger *log.Logger) error
 		GetCheckpoint() (models.LocalCheckpoint, error)
@@ -55,6 +54,7 @@ type PushData struct {
 	data string
 }
 
+// BatchUserExpander pulls the user data for a set of user Ids and sends each user id to the friends and followers expanders
 func (env *Env) BatchUserExpander(ctx context.Context, batchUserRequestChan <-chan batchUserRequest) {
 	env.RunLogger.Println("in BatchUserExpander")
 	defer env.wg.Done()
@@ -73,6 +73,7 @@ func (env *Env) BatchUserExpander(ctx context.Context, batchUserRequestChan <-ch
 	}
 }
 
+// FollowerExpander pulls the user data of all a userid's followers and sends it to be recorded
 func (env *Env) FollowerExpander(userRequest UserRequest) {
 	env.RunLogger.Println("in FollowerExpander")
 	defer env.wg.Done()
@@ -84,6 +85,7 @@ func (env *Env) FollowerExpander(userRequest UserRequest) {
 	}
 }
 
+// FriendExpander pulls the user data of all a userid's friends (users they follow) and sends it to be recorded
 func (env *Env) FriendExpander(userRequest UserRequest) {
 	env.RunLogger.Println("in FriendExpander")
 	defer env.wg.Done()
@@ -91,27 +93,30 @@ func (env *Env) FriendExpander(userRequest UserRequest) {
 	userRequest, done := env.expandFriends(userRequest)
 	if userRequest.nextToken != "" && !done {
 		env.wg.Add(1)
-		go env.FriendExpander(userRequest)
+		env.FriendExpander(userRequest)
 	}
 }
 
-func (env *Env) UserDataSaver(ctx context.Context, userDataChan <-chan PushData) {
+// UserDataSaver wraps a saveUserData implementation for userdata objects
+func (env *Env) UserDataSaver(userDataChan <-chan PushData) {
 	env.RunLogger.Println("in UserDataSaver")
 
-	env.saveUserData(ctx, userDataChan, "user_data/")
+	env.saveUserData(userDataChan, "user_data/")
 
 	env.RunLogger.Println("done in UserDataSaver")
 }
 
-func (env *Env) FollowMappingSaver(ctx context.Context, followMapChan <-chan PushData) {
+// FollowMappingSaver wraps a saveUserData implementation for follower mapping objects
+func (env *Env) FollowMappingSaver(followMapChan <-chan PushData) {
 	env.RunLogger.Println("in FollowMappingSaver")
 
-	env.saveUserData(ctx, followMapChan, "follow_map/")
+	env.saveUserData(followMapChan, "follow_map/")
 
 	env.RunLogger.Println("done in FollowMappingSaver")
 }
 
-func (env *Env) saveUserData(ctx context.Context, Chan <-chan PushData, filePrefix string) {
+// saveUserData batches data packets in it's channel and writes them to cloud storage
+func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
 	batch := make([]string, 0)
 	for obj := range Chan {
 		batch = append(batch, obj.data)
@@ -120,9 +125,6 @@ func (env *Env) saveUserData(ctx context.Context, Chan <-chan PushData, filePref
 			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 			batch = make([]string, 0)
 		}
-		if ctx.Done() != nil {
-			break
-		}
 	}
 	if len(batch) > 0 {
 		file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
@@ -130,6 +132,7 @@ func (env *Env) saveUserData(ctx context.Context, Chan <-chan PushData, filePref
 	}
 }
 
+// Refresh pulls the user data for each userid, their follower and their friends (people they follow) and records them on the cloud
 func (env *Env) Refresh() {
 	env.RunLogger.Println("in Refresh")
 	ctx := context.Background()
@@ -143,7 +146,9 @@ func (env *Env) Refresh() {
 	env.userDataChan = make(chan PushData, 100000)
 	env.followMapChan = make(chan PushData, 100000)
 
-	env.pushDataCloseChecks = make([]bool, 2)
+	// setup data output function
+	env.UserDataSaver(env.userDataChan)
+	env.FollowMappingSaver(env.followMapChan)
 
 	// setup env waitgroups
 	env.wg = &sync.WaitGroup{}
