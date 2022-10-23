@@ -121,8 +121,10 @@ func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
 	for obj := range Chan {
 		batch = append(batch, obj.data)
 		if len(batch) == 1000 {
+			env.RunLogger.Println("writing batch")
 			file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
 			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+			env.RunLogger.Println("wrote batch")
 			batch = make([]string, 0)
 		}
 	}
@@ -147,8 +149,8 @@ func (env *Env) Refresh() {
 	env.followMapChan = make(chan PushData, 100000)
 
 	// setup data output function
-	env.UserDataSaver(env.userDataChan)
-	env.FollowMappingSaver(env.followMapChan)
+	go env.UserDataSaver(env.userDataChan)
+	go env.FollowMappingSaver(env.followMapChan)
 
 	// setup env waitgroups
 	env.wg = &sync.WaitGroup{}
@@ -162,9 +164,11 @@ func (env *Env) Refresh() {
 		if userStub.InNextEpoc {
 			batch = append(batch, userID)
 			if len(batch) == 1000 {
+				env.RunLogger.Println("sending batch of users")
 				env.batchUserRequestChan <- batchUserRequest{
 					userIDs: batch,
 				}
+				env.RunLogger.Println("sent batch of users")
 				batch = make([]string, 0)
 			}
 		}
@@ -176,14 +180,20 @@ func (env *Env) Refresh() {
 	}
 
 	// start closing cascade
+	env.RunLogger.Println("closing batchUserRequestChan")
 	cancel()
+	env.RunLogger.Println("closed batchUserRequestChan")
 
 	// wait for all workers to finish
+	env.RunLogger.Println("waiting for workers to finish")
 	env.wg.Wait()
+	env.RunLogger.Println("workers finished")
 
 	// signal data recording functions to stop receiving data
+	env.RunLogger.Println("closing data channels")
 	close(env.followMapChan)
 	close(env.userDataChan)
+	env.RunLogger.Println("closed data channels")
 
 	env.RunLogger.Println("done Refresh")
 }
