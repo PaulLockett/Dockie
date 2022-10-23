@@ -5,15 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	twitter "github.com/g8rswimmer/go-twitter/v2"
 )
 
-func (env *Env) expandFollowers(user UserRequest) {
-	if user.shouldClose {
-		return
-	}
+func (env *Env) expandFollowers(user UserRequest) (UserRequest, bool) {
 	env.RunLogger.Printf("Expanding followers for userID %s", user.userID)
 	opts := twitter.UserFollowersLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
@@ -24,19 +20,16 @@ func (env *Env) expandFollowers(user UserRequest) {
 		opts.PaginationToken = user.nextToken
 	}
 
+	env.userFollowerRequestLimiter.Take()
 	userResponse, err := env.TwitterClient.UserFollowersLookup(context.Background(), user.userID, opts)
 	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: user.nextToken, rateLimitReset: rateLimit.Reset.Time(), closingUser: user.closingUser, shouldClose: false}
-		return
+		return UserRequest{userID: user.userID, nextToken: user.nextToken}, false
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}, closingUser: user.closingUser, shouldClose: false}
-	} else if user.closingUser {
-		env.userFollowerChan <- UserRequest{userID: user.userID, nextToken: "", rateLimitReset: time.Time{}, closingUser: true, shouldClose: true}
-		env.pushDataCloseChecks[0] = true
+		return UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken}, false
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
@@ -48,13 +41,10 @@ func (env *Env) expandFollowers(user UserRequest) {
 		})
 	}
 	env.sendUserData(dictionaries, false, &followerMappings)
-
+	return UserRequest{}, true
 }
 
-func (env *Env) expandFriends(user UserRequest) {
-	if user.shouldClose {
-		return
-	}
+func (env *Env) expandFriends(user UserRequest) (UserRequest, bool) {
 	env.RunLogger.Printf("Expanding friends for userID %s", user.userID)
 	opts := twitter.UserFollowingLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
@@ -65,19 +55,16 @@ func (env *Env) expandFriends(user UserRequest) {
 		opts.PaginationToken = user.nextToken
 	}
 
+	env.userFriendRequestLimiter.Take()
 	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), user.userID, opts)
 	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: user.nextToken, rateLimitReset: rateLimit.Reset.Time(), closingUser: user.closingUser, shouldClose: false}
-		return
+		return UserRequest{userID: user.userID, nextToken: user.nextToken}, false
 	}
 
 	if userResponse.Meta.NextToken != "" {
-		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken, rateLimitReset: time.Time{}, closingUser: user.closingUser, shouldClose: false}
-	} else if user.closingUser {
-		env.userFriendChan <- UserRequest{userID: user.userID, nextToken: "", rateLimitReset: time.Time{}, closingUser: true, shouldClose: true}
-		env.pushDataCloseChecks[1] = true
+		return UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken}, false
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
@@ -90,24 +77,29 @@ func (env *Env) expandFriends(user UserRequest) {
 	}
 	env.sendUserData(dictionaries, false, &followerMappings)
 
+	return UserRequest{}, true
+
 }
 
-func (env *Env) expandUsers(userIDs []string) {
+func (env *Env) expandUsers(userIDs []string) bool {
 	env.RunLogger.Printf("Expanding users for %d users", len(userIDs))
 	opts := twitter.UserLookupOpts{
 		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
 	}
 
+	env.batchUserRequestLimiter.Take()
 	userResponse, err := env.TwitterClient.UserLookup(context.Background(), userIDs, opts)
 	env.reportError("(batch user lookup)", err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		env.batchUserRequestChan <- batchUserRequest{userIDs: userIDs, rateLimitReset: rateLimit.Reset.Time()}
-		return
+		env.batchUserRequestChan <- batchUserRequest{userIDs: userIDs}
+		return false
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
 	env.sendUserData(dictionaries, true, &[]FollowMap{})
+
+	return true
 }
 
 func (env *Env) reportError(userId string, err error, partialErrors []*twitter.ErrorObj) {
@@ -143,10 +135,6 @@ func (env *Env) reportError(userId string, err error, partialErrors []*twitter.E
 }
 
 func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, keepFresh bool, mappings *[]FollowMap) {
-	shouldClose := false
-	if env.pushDataCloseChecks[0] && env.pushDataCloseChecks[1] {
-		shouldClose = true
-	}
 	if len(dictionaries) != 0 {
 		env.RunLogger.Printf("Sending %d user dictionaries", len(dictionaries))
 		for _, dictionary := range dictionaries {
@@ -160,7 +148,7 @@ func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, ke
 			if err != nil {
 				env.ErrorLogger.Printf("Error marshalling user data : %s", err)
 			}
-			env.userDataChan <- PushData{string(userData), shouldClose}
+			env.userDataChan <- PushData{string(userData)}
 		}
 		env.Storage.PutCheckpoint(env.Checkpoint)
 	}
@@ -171,7 +159,7 @@ func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, ke
 			if err != nil {
 				env.ErrorLogger.Printf("Error marshalling mapping data : %s", err)
 			}
-			env.followMapChan <- PushData{string(mappingJSON), shouldClose}
+			env.followMapChan <- PushData{string(mappingJSON)}
 		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 
 	"cloud.google.com/go/logging"
 	twitter "github.com/g8rswimmer/go-twitter/v2"
-	"github.com/go-co-op/gocron"
 	"github.com/gorilla/mux"
 )
 
@@ -57,14 +56,7 @@ func main() {
 		TwitterClient: client,
 	}
 
-	// setup cron job
-	refreshScheduler := gocron.NewScheduler(time.UTC)
-	if os.Getenv("ENV") == "production" {
-		refreshScheduler.SingletonMode().Every(1).Day().At("00:00").Do(env.Refresh)
-	} else {
-		go env.Refresh()
-	}
-	refreshScheduler.StartAsync()
+	go env.Refresh()
 
 	router := mux.NewRouter()
 
@@ -72,6 +64,7 @@ func main() {
 
 	router.HandleFunc("/", env.IndexGetHandler).Methods("GET")
 	router.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
+	router.HandleFunc("/Refresh", env.RefreshHandler).Methods("Get")
 
 	port := os.Getenv("PORT")
 	if port == "" {
