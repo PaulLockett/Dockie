@@ -4,9 +4,6 @@ import (
 	"app/models"
 	"context"
 	"log"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,12 +11,13 @@ import (
 	"go.uber.org/ratelimit"
 )
 
+// Env is active the environment for the application
 type Env struct {
 	StartTime                  time.Time
 	Checkpoint                 models.LocalCheckpoint
 	RunLogger                  *log.Logger
 	ErrorLogger                *log.Logger
-	ApiKey                     string
+	APIKey                     string
 	wg                         *sync.WaitGroup
 	TwitterClient              *twitter.Client
 	userDataChan               chan PushData
@@ -29,10 +27,10 @@ type Env struct {
 	userFriendRequestLimiter   ratelimit.Limiter
 	followMapChan              chan PushData
 	Storage                    interface {
-		Setup(ctx context.Context, ErrorLogger *log.Logger) error
+		Setup(url string, user string, password string, nameSpace string, database string) error
 		GetCheckpoint() (models.LocalCheckpoint, error)
 		PutCheckpoint(checkpoint models.LocalCheckpoint) error
-		Put(bucket, object string, data []byte) error
+		Put(name string, data map[string]interface{}) error
 	}
 }
 
@@ -122,15 +120,15 @@ func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
 		batch = append(batch, obj.data)
 		if len(batch) == 1000 {
 			env.RunLogger.Println("writing batch")
-			file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
-			env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+			// file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+			// env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 			env.RunLogger.Println("wrote batch")
 			batch = make([]string, 0)
 		}
 	}
 	if len(batch) > 0 {
-		file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
-		env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+		// file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
+		// env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
 	}
 }
 
