@@ -15,22 +15,19 @@ import (
 type Env struct {
 	StartTime                  time.Time
 	Checkpoint                 models.LocalCheckpoint
-	RunLogger                  *log.Logger
-	ErrorLogger                *log.Logger
 	APIKey                     string
 	wg                         *sync.WaitGroup
 	TwitterClient              *twitter.Client
-	userDataChan               chan PushData
+	dataChan                   chan any
 	batchUserRequestChan       chan batchUserRequest
 	batchUserRequestLimiter    ratelimit.Limiter
 	userFollowerRequestLimiter ratelimit.Limiter
 	userFriendRequestLimiter   ratelimit.Limiter
-	followMapChan              chan PushData
 	Storage                    interface {
 		Setup(url string, user string, password string, nameSpace string, database string) error
 		GetCheckpoint() (models.LocalCheckpoint, error)
 		PutCheckpoint(checkpoint models.LocalCheckpoint) error
-		Put(name string, data map[string]interface{}) error
+		Put(name string, data interface{}) error
 	}
 }
 
@@ -48,13 +45,9 @@ type FollowMap struct {
 	FollowerID string
 }
 
-type PushData struct {
-	data string
-}
-
 // BatchUserExpander pulls the user data for a set of user Ids and sends each user id to the friends and followers expanders
 func (env *Env) BatchUserExpander(ctx context.Context, batchUserRequestChan <-chan batchUserRequest) {
-	env.RunLogger.Println("in BatchUserExpander")
+	log.Println("in BatchUserExpander")
 	defer env.wg.Done()
 
 	for batchUserRequest := range batchUserRequestChan {
@@ -73,7 +66,7 @@ func (env *Env) BatchUserExpander(ctx context.Context, batchUserRequestChan <-ch
 
 // FollowerExpander pulls the user data of all a userid's followers and sends it to be recorded
 func (env *Env) FollowerExpander(userRequest UserRequest) {
-	env.RunLogger.Println("in FollowerExpander")
+	log.Println("in FollowerExpander")
 	defer env.wg.Done()
 
 	userRequest, done := env.expandFollowers(userRequest)
@@ -85,7 +78,7 @@ func (env *Env) FollowerExpander(userRequest UserRequest) {
 
 // FriendExpander pulls the user data of all a userid's friends (users they follow) and sends it to be recorded
 func (env *Env) FriendExpander(userRequest UserRequest) {
-	env.RunLogger.Println("in FriendExpander")
+	log.Println("in FriendExpander")
 	defer env.wg.Done()
 
 	userRequest, done := env.expandFriends(userRequest)
@@ -95,46 +88,30 @@ func (env *Env) FriendExpander(userRequest UserRequest) {
 	}
 }
 
-// UserDataSaver wraps a saveUserData implementation for userdata objects
-func (env *Env) UserDataSaver(userDataChan <-chan PushData) {
-	env.RunLogger.Println("in UserDataSaver")
-
-	env.saveUserData(userDataChan, "user_data/")
-
-	env.RunLogger.Println("done in UserDataSaver")
-}
-
-// FollowMappingSaver wraps a saveUserData implementation for follower mapping objects
-func (env *Env) FollowMappingSaver(followMapChan <-chan PushData) {
-	env.RunLogger.Println("in FollowMappingSaver")
-
-	env.saveUserData(followMapChan, "follow_map/")
-
-	env.RunLogger.Println("done in FollowMappingSaver")
-}
-
-// saveUserData batches data packets in it's channel and writes them to cloud storage
-func (env *Env) saveUserData(Chan <-chan PushData, filePrefix string) {
-	batch := make([]string, 0)
+// DataSaver batches data packets in it's channel and writes them to cloud storage
+func (env *Env) DataSaver(Chan <-chan any) {
 	for obj := range Chan {
-		batch = append(batch, obj.data)
-		if len(batch) == 1000 {
-			env.RunLogger.Println("writing batch")
-			// file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
-			// env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
-			env.RunLogger.Println("wrote batch")
-			batch = make([]string, 0)
+		tableName := "error"
+		switch obj.(type) {
+		case twitter.UserObj:
+			userID := obj.(twitter.UserObj).ID
+			tableName = "user_data" + ":" + userID
+		case FollowMap:
+			userID := obj.(FollowMap).UserID
+			FollowerID := obj.(FollowMap).FollowerID
+			tableName = "follow_map" + ":`" + userID + "-" + FollowerID + "`"
+		default:
+			log.Println("unknown type in saveUserData")
 		}
-	}
-	if len(batch) > 0 {
-		// file := filePrefix + strconv.Itoa(env.Checkpoint.CurrentEpoc) + "/" + strconv.Itoa(int(time.Now().Unix())) + ".jsonl"
-		// env.Storage.Put(os.Getenv("BUCKET_NAME"), file, []byte(strings.Join(batch, "\n")))
+		if err := env.Storage.Put(tableName, obj); err != nil {
+			log.Println(err)
+		}
 	}
 }
 
 // Refresh pulls the user data for each userid, their follower and their friends (people they follow) and records them on the cloud
 func (env *Env) Refresh() {
-	env.RunLogger.Println("in Refresh")
+	log.Println("in Refresh")
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	env.batchUserRequestLimiter = ratelimit.New(1)
@@ -143,12 +120,10 @@ func (env *Env) Refresh() {
 
 	// setup env channels
 	env.batchUserRequestChan = make(chan batchUserRequest, 360)
-	env.userDataChan = make(chan PushData, 100000)
-	env.followMapChan = make(chan PushData, 100000)
+	env.dataChan = make(chan any, 100000)
 
 	// setup data output function
-	go env.UserDataSaver(env.userDataChan)
-	go env.FollowMappingSaver(env.followMapChan)
+	go env.DataSaver(env.dataChan)
 
 	// setup env waitgroups
 	env.wg = &sync.WaitGroup{}
@@ -162,11 +137,11 @@ func (env *Env) Refresh() {
 		if userStub.InNextEpoc {
 			batch = append(batch, userID)
 			if len(batch) == 1000 {
-				env.RunLogger.Println("sending batch of users")
+				log.Println("sending batch of users")
 				env.batchUserRequestChan <- batchUserRequest{
 					userIDs: batch,
 				}
-				env.RunLogger.Println("sent batch of users")
+				log.Println("sent batch of users")
 				batch = make([]string, 0)
 			}
 		}
@@ -178,20 +153,19 @@ func (env *Env) Refresh() {
 	}
 
 	// start closing cascade
-	env.RunLogger.Println("closing batchUserRequestChan")
+	log.Println("closing batchUserRequestChan")
 	cancel()
-	env.RunLogger.Println("closed batchUserRequestChan")
+	log.Println("closed batchUserRequestChan")
 
 	// wait for all workers to finish
-	env.RunLogger.Println("waiting for workers to finish")
+	log.Println("waiting for workers to finish")
 	env.wg.Wait()
-	env.RunLogger.Println("workers finished")
+	log.Println("workers finished")
 
 	// signal data recording functions to stop receiving data
-	env.RunLogger.Println("closing data channels")
-	close(env.followMapChan)
-	close(env.userDataChan)
-	env.RunLogger.Println("closed data channels")
+	log.Println("closing data channels")
+	close(env.dataChan)
+	log.Println("closed data channels")
 
-	env.RunLogger.Println("done Refresh")
+	log.Println("done Refresh")
 }

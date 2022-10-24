@@ -3,6 +3,7 @@ package models
 import (
 	"log"
 
+	ms "github.com/mitchellh/mapstructure"
 	surrealdb "github.com/surrealdb/surrealdb.go"
 )
 
@@ -21,6 +22,7 @@ type LocalCheckpoint struct {
 	CurrentEpoc  int                      `json:"CurrentEpoc"`
 	NumKeptUsers int                      `json:"NumKeptUsers"`
 	UserMap      map[string]LocalUserStub `json:"UserMap"`
+	id           string
 }
 
 // Setup connects to the database
@@ -45,8 +47,8 @@ func (s *StorageModel) Setup(url string, user string, password string, nameSpace
 }
 
 // Put writes a key-value pair to the database.
-func (s *StorageModel) Put(name string, data map[string]interface{}) error {
-	if _, err := s.DB.Create(name, data); err != nil {
+func (s *StorageModel) Put(name string, data interface{}) error {
+	if _, err := s.DB.Update(name, data); err != nil {
 		log.Println(err)
 		return err
 	}
@@ -55,19 +57,23 @@ func (s *StorageModel) Put(name string, data map[string]interface{}) error {
 
 // GetCheckpoint returns the go map representation of the checkpoint JSON file.
 func (s *StorageModel) GetCheckpoint() (LocalCheckpoint, error) {
-	storageCheckpoint, err := s.DB.Select("checkpoint:2")
+	storageCheckpoint, err := s.DB.Select("checkpoint:3")
 	if err != nil {
 		log.Println(err)
 		return LocalCheckpoint{}, err
 	}
-	log.Println(storageCheckpoint.(map[string]interface{})["checkpoint"])
+	var result LocalCheckpoint
+	ok := ms.Decode(storageCheckpoint, &result)
+	if ok != nil {
+		panic(ok)
+	}
 
-	return parseCheckpoint(storageCheckpoint.(map[string]interface{})["checkpoint"].(LocalCheckpoint))
+	return parseCheckpoint(result)
 }
 
 // PutCheckpoint writes the go map representation of the checkpoint JSON file.
 func (s *StorageModel) PutCheckpoint(checkpoint LocalCheckpoint) error {
-	if _, err := s.DB.Update("checkpoint:2", map[string]interface{}{"checkpoint": checkpoint}); err != nil {
+	if _, err := s.DB.Update("checkpoint:3", checkpoint); err != nil {
 		log.Println(err)
 		return err
 	}
