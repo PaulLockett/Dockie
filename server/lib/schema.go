@@ -92,13 +92,13 @@ func (env *Env) FriendExpander(userRequest UserRequest) {
 func (env *Env) DataSaver(Chan <-chan any) {
 	for obj := range Chan {
 		tableName := "error"
-		switch obj.(type) {
+		switch obj := obj.(type) {
 		case twitter.UserObj:
-			userID := obj.(twitter.UserObj).ID
+			userID := obj.ID
 			tableName = "user_data" + ":" + userID
 		case FollowMap:
-			userID := obj.(FollowMap).UserID
-			FollowerID := obj.(FollowMap).FollowerID
+			userID := obj.UserID
+			FollowerID := obj.FollowerID
 			tableName = "follow_map" + ":`" + userID + "-" + FollowerID + "`"
 		default:
 			log.Println("unknown type in saveUserData")
