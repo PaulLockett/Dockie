@@ -7,26 +7,27 @@ import (
 	"net/http"
 )
 
-// indexHandler responds to requests with the internal
+// IndexGetHandler responds to requests with the internal checkpoint
 func (env *Env) IndexGetHandler(w http.ResponseWriter, r *http.Request) {
-	env.RunLogger.Println("index get")
-	if r.Header.Get("X-API-KEY") != env.ApiKey {
+	log.Println("index get")
+	if r.Header.Get("X-API-KEY") != env.APIKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	checkpointJson, err := json.Marshal(env.Checkpoint)
+	checkpointJSON, err := json.Marshal(env.Checkpoint)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(checkpointJson)
+	w.Write(checkpointJSON)
 }
 
+// IndexPutHandler responds to requests by updating the internal checkpoint
 func (env *Env) IndexPutHandler(w http.ResponseWriter, r *http.Request) {
-	env.RunLogger.Println("index put")
-	if r.Header.Get("X-API-KEY") != env.ApiKey {
+	log.Println("index put")
+	if r.Header.Get("X-API-KEY") != env.APIKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -53,10 +54,4 @@ func (env *Env) IndexPutHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-// Log when an appengine warmup request is used to create the new instance.
-// Warmup steps are taken in main for consistency with "cold start" instances.
-func (env *Env) WarmUpHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("warmup done")
 }

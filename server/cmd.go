@@ -3,33 +3,34 @@ package main
 import (
 	"app/lib"
 	"app/models"
-	"context"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"cloud.google.com/go/logging"
 	twitter "github.com/g8rswimmer/go-twitter/v2"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	// setup data structures and sources
 	startupTime := time.Now()
 
-	// setup logging
-	logClient, err := logging.NewClient(context.Background(), "dockie-359309")
+	err := godotenv.Load(".env.local")
 	if err != nil {
-		log.Fatalf("Failed to create logging client: %v", err)
+		log.Fatal("Error loading .env file")
 	}
-	runlogger := logClient.Logger("RunLog").StandardLogger(logging.Info)
-	errlogger := logClient.Logger("ErrorLog").StandardLogger(logging.Error)
 
-	// setup google cloud storage
-	storageModel := new(models.StorageModel)
-	storageModel.Setup(context.Background(), errlogger)
-	checkpoint, err := storageModel.GetCheckpoint()
+	// setup storage
+	storage := models.StorageModel{}
+	if err := storage.Setup(os.Getenv("SURREALDB_URL"), os.Getenv("SURREALDB_USER"), os.Getenv("SURREALDB_PASSWORD"), os.Getenv("SURREALDB_NAMESPACE"), os.Getenv("SURREALDB_DATABASE")); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("storage setup complete")
+	// setup checkpoint
+	checkpoint, err := storage.GetCheckpoint()
 	if err != nil {
 		checkpoint = models.LocalCheckpoint{
 			CurrentEpoc: 0,
@@ -47,20 +48,16 @@ func main() {
 	}
 
 	env := &lib.Env{
-		ApiKey:        os.Getenv("API_KEY"),
-		RunLogger:     runlogger,
-		ErrorLogger:   errlogger,
+		APIKey:        os.Getenv("API_KEY"),
 		StartTime:     startupTime,
 		Checkpoint:    checkpoint,
-		Storage:       storageModel,
+		Storage:       &storage,
 		TwitterClient: client,
 	}
 
-	go env.Refresh()
+	// go env.Refresh()
 
 	router := mux.NewRouter()
-
-	router.HandleFunc("/_ah/warmup", env.WarmUpHandler)
 
 	router.HandleFunc("/", env.IndexGetHandler).Methods("GET")
 	router.HandleFunc("/", env.IndexPutHandler).Methods("PUT")
