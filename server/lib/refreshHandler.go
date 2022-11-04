@@ -9,10 +9,10 @@ import (
 // RefreshHandler starts a new refresh of the data set
 func (env *Env) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("refresh get")
-	// if r.Header.Get("X-API-KEY") != env.APIKey {
-	// 	w.WriteHeader(http.StatusUnauthorized)
-	// 	return
-	// }
+	if r.Header.Get("X-API-KEY") != env.APIKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	go env.Refresh()
 	resp, err := json.Marshal("refresh started")
 	if err != nil {
