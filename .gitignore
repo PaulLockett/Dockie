@@ -36,3 +36,4 @@
 
 # vercel
 */.vercel
+server/.env.local
