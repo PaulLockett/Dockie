@@ -69,10 +69,10 @@ func (env *Env) FollowerExpander(userRequest UserRequest) {
 	log.Println("in FollowerExpander")
 	defer env.wg.Done()
 
-	userRequest, done := env.expandFollowers(userRequest)
-	if userRequest.nextToken != "" && !done {
+	newUserRequest, done := env.expandFollowers(userRequest)
+	if newUserRequest.nextToken != "" && !done {
 		env.wg.Add(1)
-		env.FollowerExpander(userRequest)
+		env.FollowerExpander(newUserRequest)
 	}
 }
 
@@ -94,17 +94,14 @@ func (env *Env) DataSaver(Chan <-chan any) {
 		tableName := "error"
 		switch obj := obj.(type) {
 		case twitter.UserObj:
-			userID := obj.ID
-			tableName = "user_data" + ":" + userID
+			tableName = "user_data" + ":" + obj.ID
 		case FollowMap:
-			userID := obj.UserID
-			FollowerID := obj.FollowerID
-			tableName = "follow_map" + ":`" + userID + "-" + FollowerID + "`"
+			tableName = "follow_map" + ":`" + obj.UserID + "-" + obj.FollowerID + "`"
 		default:
 			log.Println("unknown type in saveUserData")
 		}
 		if err := env.Storage.Put(tableName, obj); err != nil {
-			log.Println(err)
+			log.Println("Error inn DataSaver", err)
 		}
 	}
 }
@@ -122,11 +119,11 @@ func (env *Env) Refresh() {
 	env.batchUserRequestChan = make(chan batchUserRequest, 360)
 	env.dataChan = make(chan any, 100000)
 
-	// setup data output function
-	go env.DataSaver(env.dataChan)
-
 	// setup env waitgroups
 	env.wg = &sync.WaitGroup{}
+
+	// setup data output function
+	go env.DataSaver(env.dataChan)
 
 	// start workers
 	env.wg.Add(1)
@@ -164,7 +161,7 @@ func (env *Env) Refresh() {
 
 	// signal data recording functions to stop receiving data
 	log.Println("closing data channels")
-	close(env.dataChan)
+	//close(env.dataChan)
 	log.Println("closed data channels")
 
 	log.Println("done Refresh")

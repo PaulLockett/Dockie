@@ -13,8 +13,15 @@ import (
 func (env *Env) expandFollowers(user UserRequest) (UserRequest, bool) {
 	log.Printf("Expanding followers for userID %s", user.userID)
 	opts := twitter.UserFollowersLookupOpts{
-		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
-		MaxResults: 1000,
+		UserFields: []twitter.UserField{twitter.UserFieldDescription,
+			twitter.UserFieldEntities, twitter.UserFieldLocation,
+			twitter.UserFieldName, twitter.UserFieldProfileImageURL,
+			twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID,
+			twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected,
+			twitter.UserFieldPublicMetrics, twitter.UserFieldUserName,
+			twitter.UserFieldVerified, twitter.UserFieldWithHeld},
+		MaxResults:      1000,
+		PaginationToken: user.nextToken,
 	}
 
 	if user.nextToken != "" {
@@ -25,40 +32,17 @@ func (env *Env) expandFollowers(user UserRequest) (UserRequest, bool) {
 	userResponse, err := env.TwitterClient.UserFollowersLookup(context.Background(), user.userID, opts)
 	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
-	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
-		return UserRequest{userID: user.userID, nextToken: user.nextToken}, false
-	}
-
-	if userResponse.Meta.NextToken != "" {
-		return UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken}, false
-	}
-
 	dictionaries := userResponse.Raw.UserDictionaries()
-	followerMappings := make([]FollowMap, len(dictionaries))
+	followerMappings := make([]FollowMap, 0, len(dictionaries))
+	log.Printf("Found %d followers for userID %s", len(dictionaries), user.userID)
 	for _, dictionary := range dictionaries {
 		followerMappings = append(followerMappings, FollowMap{
 			UserID:     "user_data:" + user.userID,
 			FollowerID: "user_data:" + dictionary.User.ID,
 		})
 	}
+	log.Printf("Sending %d follower mappings for userID %s", len(followerMappings), user.userID)
 	env.sendUserData(dictionaries, false, &followerMappings)
-	return UserRequest{}, true
-}
-
-func (env *Env) expandFriends(user UserRequest) (UserRequest, bool) {
-	log.Printf("Expanding friends for userID %s", user.userID)
-	opts := twitter.UserFollowingLookupOpts{
-		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities, twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL, twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID, twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected, twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified, twitter.UserFieldWithHeld},
-		MaxResults: 1000,
-	}
-
-	if user.nextToken != "" {
-		opts.PaginationToken = user.nextToken
-	}
-
-	env.userFriendRequestLimiter.Take()
-	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), user.userID, opts)
-	env.reportError(user.userID, err, userResponse.Raw.Errors)
 
 	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
 		return UserRequest{userID: user.userID, nextToken: user.nextToken}, false
@@ -68,8 +52,28 @@ func (env *Env) expandFriends(user UserRequest) (UserRequest, bool) {
 		return UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken}, false
 	}
 
+	return UserRequest{}, true
+}
+
+func (env *Env) expandFriends(user UserRequest) (UserRequest, bool) {
+	log.Printf("Expanding friends for userID %s", user.userID)
+	opts := twitter.UserFollowingLookupOpts{
+		UserFields: []twitter.UserField{twitter.UserFieldDescription, twitter.UserFieldEntities,
+			twitter.UserFieldLocation, twitter.UserFieldName, twitter.UserFieldProfileImageURL,
+			twitter.UserFieldURL, twitter.UserFieldCreatedAt, twitter.UserFieldID,
+			twitter.UserFieldPinnedTweetID, twitter.UserFieldProtected,
+			twitter.UserFieldPublicMetrics, twitter.UserFieldUserName, twitter.UserFieldVerified,
+			twitter.UserFieldWithHeld},
+		MaxResults:      1000,
+		PaginationToken: user.nextToken,
+	}
+
+	env.userFriendRequestLimiter.Take()
+	userResponse, err := env.TwitterClient.UserFollowingLookup(context.Background(), user.userID, opts)
+	env.reportError(user.userID, err, userResponse.Raw.Errors)
+
 	dictionaries := userResponse.Raw.UserDictionaries()
-	followerMappings := make([]FollowMap, len(dictionaries))
+	followerMappings := make([]FollowMap, 0, len(dictionaries))
 	for _, dictionary := range dictionaries {
 		followerMappings = append(followerMappings, FollowMap{
 			UserID:     "user_data:" + dictionary.User.ID,
@@ -77,6 +81,14 @@ func (env *Env) expandFriends(user UserRequest) (UserRequest, bool) {
 		})
 	}
 	env.sendUserData(dictionaries, false, &followerMappings)
+
+	if rateLimit, has := twitter.RateLimitFromError(err); has && rateLimit.Remaining == 0 {
+		return UserRequest{userID: user.userID, nextToken: user.nextToken}, false
+	}
+
+	if userResponse.Meta.NextToken != "" {
+		return UserRequest{userID: user.userID, nextToken: userResponse.Meta.NextToken}, false
+	}
 
 	return UserRequest{}, true
 
@@ -98,7 +110,7 @@ func (env *Env) expandUsers(userIDs []string) bool {
 	}
 
 	dictionaries := userResponse.Raw.UserDictionaries()
-	env.sendUserData(dictionaries, true, &[]FollowMap{})
+	env.sendUserData(dictionaries, true, nil)
 
 	return true
 }
@@ -150,7 +162,7 @@ func (env *Env) sendUserData(dictionaries map[string]*twitter.UserDictionary, ke
 		}
 		env.Storage.PutCheckpoint(env.Checkpoint)
 	}
-	if len(*mappings) != 0 {
+	if mappings != nil && len(*mappings) != 0 {
 		log.Printf("Sending %d follower mappings", len(*mappings))
 		for _, mapping := range *mappings {
 			env.dataChan <- mapping
